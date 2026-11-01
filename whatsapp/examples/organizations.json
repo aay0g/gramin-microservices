@@ -1,0 +1,26 @@
+{
+  "library-demo": {
+    "apiKeyEnv": "LIBRARY_API_KEY",
+    "accessTokenEnv": "LIBRARY_META_ACCESS_TOKEN",
+    "phoneNumberId": "REPLACE_WITH_LIBRARY_PHONE_NUMBER_ID",
+    "templates": {
+      "subscription_renewal": {
+        "name": "library_subscription_renewal",
+        "language": "en",
+        "bodyParameters": ["customer_name", "library_name", "renewal_date"]
+      }
+    }
+  },
+  "restaurant-demo": {
+    "apiKeyEnv": "RESTAURANT_API_KEY",
+    "accessTokenEnv": "RESTAURANT_META_ACCESS_TOKEN",
+    "phoneNumberId": "REPLACE_WITH_RESTAURANT_PHONE_NUMBER_ID",
+    "templates": {
+      "purchase_receipt": {
+        "name": "restaurant_purchase_receipt",
+        "language": "en",
+        "bodyParameters": ["customer_name", "restaurant_name", "order_number", "total"]
+      }
+    }
+  }
+}
