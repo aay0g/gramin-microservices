@@ -5,10 +5,16 @@ export function loadConfig(env = process.env) {
     if (!env[name] || env[name].startsWith('replace-with')) throw new Error(`Configure ${name}`);
     return env[name];
   };
-  const graphVersion = required('META_GRAPH_VERSION');
-  if (!/^v\d+\.\d+$/.test(graphVersion)) throw new Error('META_GRAPH_VERSION must be a supported version, e.g. vNN.0');
   const port = Number(env.PORT || 8080);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
+  const mode = env.WHATSAPP_MODE || 'webhook';
+  if (!['webhook', 'messaging'].includes(mode)) throw new Error('WHATSAPP_MODE must be webhook or messaging');
+  const verifyToken = required('META_WEBHOOK_VERIFY_TOKEN');
+  const appSecret = env.META_APP_SECRET ? required('META_APP_SECRET') : undefined;
+  if (mode === 'webhook') return { port, mode, verifyToken, appSecret, organizations: new Map() };
+  required('META_APP_SECRET');
+  const graphVersion = required('META_GRAPH_VERSION');
+  if (!/^v\d+\.\d+$/.test(graphVersion)) throw new Error('META_GRAPH_VERSION must be a supported version, e.g. vNN.0');
   // Inline JSON is suitable for a Secret Manager environment injection on Cloud Run.
   const raw = env.ORGANIZATIONS_JSON || readFileSync(required('ORGANIZATIONS_FILE'), 'utf8');
   const parsed = JSON.parse(raw);
@@ -29,5 +35,5 @@ export function loadConfig(env = process.env) {
     organizations.set(id, { ...org, apiKey, accessToken: required(org.accessTokenEnv) });
   }
   if (!organizations.size) throw new Error('Configure at least one organization');
-  return { port, graphVersion, appSecret: required('META_APP_SECRET'), verifyToken: required('META_WEBHOOK_VERIFY_TOKEN'), organizations };
+  return { port, mode, graphVersion, appSecret, verifyToken, organizations };
 }

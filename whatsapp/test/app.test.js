@@ -9,21 +9,21 @@ const apiKey = 'a'.repeat(32);
 const organization = { apiKeyEnv: 'ORG_KEY', accessTokenEnv: 'ORG_TOKEN', phoneNumberId: '12345', templates: {
   renewal: { name: 'library_subscription_renewal', language: 'en', bodyParameters: ['name', 'date'] }
 } };
-const env = { META_GRAPH_VERSION: 'v99.0', META_APP_SECRET: 'test-secret', META_WEBHOOK_VERIFY_TOKEN: 'test-verify',
+const env = { WHATSAPP_MODE: 'messaging', META_GRAPH_VERSION: 'v99.0', META_APP_SECRET: 'test-secret', META_WEBHOOK_VERIFY_TOKEN: 'test-verify',
   ORGANIZATIONS_JSON: JSON.stringify({ library: organization, restaurant: { ...organization, apiKeyEnv: 'OTHER_KEY', phoneNumberId: '67890' } }),
   ORG_KEY: apiKey, OTHER_KEY: 'b'.repeat(32), ORG_TOKEN: 'secret-access-token' };
 const message = { to: '919876543210', template: 'renewal', parameters: { name: 'Asha', date: '2026-12-01' }, recipientOptIn: true };
 
-async function fixture(t, fetchImpl) {
+async function fixture(t, fetchImpl, configEnv = env) {
   const logs = [];
   const calls = [];
-  const server = createServer(createApp(loadConfig(env), {
+  const server = createServer(createApp(loadConfig(configEnv), {
     fetchImpl: async (...args) => {
       calls.push(args);
       return fetchImpl ? fetchImpl(...args) : new Response(JSON.stringify({ messages: [{ id: 'wamid.test' }] }), { status: 200 });
     }, log: event => logs.push(event)
   }));
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${server.address().port}`;
   const send = (data = message, org = 'library', key = apiKey) => fetch(`${base}/v1/organizations/${org}/messages/template`, {
@@ -124,4 +124,44 @@ test('startup rejects missing secrets, invalid version/sender and reused tenant 
   assert.throws(() => loadConfig({ ...env, META_GRAPH_VERSION: 'vXX.X' }), /META_GRAPH_VERSION/);
   assert.throws(() => loadConfig({ ...env, OTHER_KEY: apiKey }), /unique/);
   assert.throws(() => loadConfig({ ...env, ORGANIZATIONS_JSON: JSON.stringify({ library: { ...organization, phoneNumberId: 'placeholder' } }) }), /Invalid organization/);
+});
+
+test('default mode starts with only a verify token and ignores unfinished sender config', () => {
+  const config = loadConfig({ META_WEBHOOK_VERIFY_TOKEN: 'test-verify', META_GRAPH_VERSION: 'vXX.X', ORGANIZATIONS_FILE: '/does-not-exist' });
+  assert.equal(config.mode, 'webhook');
+  assert.equal(config.organizations.size, 0);
+  assert.equal(config.appSecret, undefined);
+  assert.throws(() => loadConfig({}), /META_WEBHOOK_VERIFY_TOKEN/);
+  assert.throws(() => loadConfig({ META_WEBHOOK_VERIFY_TOKEN: 'test-verify', WHATSAPP_MODE: 'typo' }), /WHATSAPP_MODE/);
+});
+
+test('token-only deployment verifies callback, stays healthy, blocks sending and unsigned receiving', async t => {
+  const f = await fixture(t, undefined, { META_WEBHOOK_VERIFY_TOKEN: 'test-verify' });
+  const path = '/webhooks/whatsapp?hub.mode=subscribe&hub.challenge=callback-test&hub.verify_token=';
+  const r = await fetch(f.base + path + 'test-verify');
+  assert.equal(r.status, 200);
+  assert.equal(await r.text(), 'callback-test');
+  assert.equal((await fetch(f.base + path + 'wrong')).status, 403);
+  assert.equal((await fetch(f.base + '/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=test-verify')).status, 403);
+  assert.equal((await fetch(f.base + '/healthz')).status, 200);
+  const send = await f.send();
+  assert.equal(send.status, 503);
+  assert.equal((await send.json()).error.code, 'MESSAGING_DISABLED');
+  const post = await fetch(f.base + '/webhooks/whatsapp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(post.status, 503);
+  assert.equal((await post.json()).error.code, 'WEBHOOK_RECEIVING_DISABLED');
+  assert.equal(f.calls.length, 0);
+});
+
+test('webhook-only deployment receives signed events when app secret is configured', async t => {
+  const f = await fixture(t, undefined, { META_WEBHOOK_VERIFY_TOKEN: 'test-verify', META_APP_SECRET: 'test-secret' });
+  const raw = JSON.stringify({ object: 'whatsapp_business_account', entry: [] });
+  const post = signature => fetch(f.base + '/webhooks/whatsapp', { method: 'POST', headers: {
+    'Content-Type': 'application/json', 'X-Hub-Signature-256': signature
+  }, body: raw });
+  const signature = 'sha256=' + createHmac('sha256', 'test-secret').update(raw).digest('hex');
+  assert.equal((await post(signature)).status, 200);
+  assert.equal((await post('invalid')).status, 401);
+  assert.equal((await f.send()).status, 503);
+  assert.equal(f.calls.length, 0);
 });

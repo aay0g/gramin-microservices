@@ -1,0 +1,6 @@
+# Upload only the standalone service build inputs, never credentials or examples.
+**
+!Dockerfile
+!package.json
+!src/
+!src/**

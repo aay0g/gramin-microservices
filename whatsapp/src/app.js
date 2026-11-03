@@ -53,6 +53,7 @@ export function createApp(config, { fetchImpl = fetch, log = event => console.lo
         return res.end(challenge);
       }
       if (url.pathname === '/webhooks/whatsapp' && req.method === 'POST') {
+        if (!config.appSecret) throw new HttpError(503, 'WEBHOOK_RECEIVING_DISABLED', 'Configure META_APP_SECRET to receive signed webhook events');
         const raw = await body(req);
         const signature = req.headers['x-hub-signature-256'];
         const expected = `sha256=${createHmac('sha256', config.appSecret).update(raw).digest('hex')}`;
@@ -76,6 +77,7 @@ export function createApp(config, { fetchImpl = fetch, log = event => console.lo
       }
       const match = /^\/v1\/organizations\/([a-z0-9_-]+)\/messages\/template$/.exec(url.pathname);
       if (req.method === 'POST' && match) {
+        if (config.mode !== 'messaging') throw new HttpError(503, 'MESSAGING_DISABLED', 'Message sending is disabled in webhook-only mode');
         const org = config.organizations.get(match[1]);
         const auth = req.headers.authorization || '';
         if (!org || !equal(auth, `Bearer ${org.apiKey}`)) throw new HttpError(401, 'UNAUTHORIZED', 'Invalid organization credentials');
